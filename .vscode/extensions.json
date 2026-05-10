@@ -1,0 +1,9 @@
+{
+    "recommendations": [
+        "charliermarsh.ruff",
+        "ms-python.vscode-pylance",
+        "ms-python.mypy-type-checker",
+        "TomRijndorp.find-it-faster",
+        "peterfh.linesinfostatusbar"
+    ]
+}
