@@ -1,7 +1,7 @@
 import typing
 
 from sqlalchemy import Select, and_, false, not_, or_, true
-from sqlalchemy.orm import DeclarativeBase, InstrumentedAttribute
+from sqlalchemy.orm import InstrumentedAttribute
 from sqlalchemy.sql.elements import ColumnElement
 
 from fastapi_guardian import exceptions
@@ -62,23 +62,33 @@ class SqlalchemyPermissionExpression(PermissionExpression):
         )
 
 
-class SqlalchemyResource(Resource, __resource_abstract__=True):
+class SqlalchemyResource(Resource):
     __resource_id_column__: str = "id"
 
     def __init_subclass__(cls, __resource_abstract__: bool = False) -> None:
-        if not __resource_abstract__:
-            resource_name = getattr(cls, "__resource_name__", None) or getattr(
-                cls, "__tablename__", None
+        if __resource_abstract__:
+            return
+
+        resource_name = getattr(cls, "__resource_name__", None) or getattr(
+            cls, "__tablename__", None
+        )
+        if resource_name is None:
+            raise exceptions.ImproperlyConfigured(
+                "Either __resource_name__ or __tablename__ must be set"
             )
-            if resource_name is None:
-                raise exceptions.ImproperlyConfigured(
-                    "Either __resource_name__ or __tablename__ must be set"
-                )
-            cls.__resource_name__ = resource_name
-        super().__init_subclass__(__resource_abstract__=__resource_abstract__)
+
+        if not isinstance(getattr(cls, "__resource_app_name__", None), str):
+            raise exceptions.ImproperlyConfigured(
+                "__resource_app_name__ string must be set for non-abstract resources"
+            )
+
+        cls.__resource_name__ = resource_name
+        cls.__resource_code__ = (
+            f"{cls.__resource_app_name__}.{cls.__resource_name__}".lower()
+        )
 
 
-class SqlalchemyAuthEngine[T: DeclarativeBase](BaseAuthEngine):
+class SqlalchemyAuthEngine(BaseAuthEngine):
     def filter_query[RowT: tuple[typing.Any, ...]](
         self,
         context: AuthContext[type[SqlalchemyResource], typing.Any],
