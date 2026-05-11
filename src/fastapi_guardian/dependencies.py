@@ -32,7 +32,7 @@ class BasePermission[T: type[Resource], ID: Identifier](abc.ABC):
         if auth_engine is not None:
             self.auth_engine = auth_engine
 
-        if self.auth_engine is None:
+        if getattr(self, "auth_engine", None) is None:
             raise exceptions.ImproperlyConfigured(
                 "auth_engine is required either as argument or as class attribute"
             )
@@ -47,7 +47,7 @@ class BasePermission[T: type[Resource], ID: Identifier](abc.ABC):
 
     @abc.abstractmethod
     async def __call__(self, *args: typing.Any, **kwargs: typing.Any) -> AuthContext:
-        pass
+        pass  # pragma: no cover
 
     async def authorize(self, principal: Principal[ID] | None = None) -> AuthContext:
         if principal is None:
