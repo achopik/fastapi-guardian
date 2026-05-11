@@ -1,4 +1,4 @@
-from tortoise import Tortoise, fields, models
+from tortoise import fields, models
 
 
 class User(models.Model):

@@ -35,7 +35,6 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # 1. Define your sqlalchemy models, inherit SqlalchemyResource
 class Base(DeclarativeBase, SqlalchemyResource, __resource_abstract__=True):
-    __app_name__ = "example"
     __resource_app_name__ = "example"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
@@ -92,7 +91,7 @@ class Article(Base):
 
 
 # 2. Create your auth engine
-auth_engine = SqlalchemyAuthEngine[Base]()
+auth_engine = SqlalchemyAuthEngine()
 
 
 # Note: You can use any string value as an action, enum prefered here for typed suggestions and consistency across the application.
@@ -130,7 +129,7 @@ def get_authorized_principal(
         .all()
     )
 
-    return Principal[int](
+    return Principal(
         id=user.id,
         email=user.email,
         username=user.username,
