@@ -275,7 +275,7 @@ async def get_articles(
             id=article.id,
             title=article.title,
             content=article.content,
-            author_id=article.author.id,
+            author_id=article.author_id,  # type: ignore[attr-defined]
             category=article.category,
         )
         for article in articles

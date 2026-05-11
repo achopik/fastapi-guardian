@@ -51,6 +51,7 @@ dev = [
     "bandit[sarif,yaml]>=1.9.4",
     "httpx>=0.28.1",
     "pre-commit>=4.6.0",
+    "pytest-lazy-fixtures>=1.4.0",
 ]
 
 [build-system]

@@ -10,13 +10,12 @@
 - Expression mini-DSL for permission conditions (AND, OR, NOT) with custom dev-defined predicates (e.g, 'self', 'only_drafts')
 - 3 scopes of permissions: global, resource-based (access to specific resource instance denoted by ID) and conditional (access to specific resource instance based on custom conditions defined in application code)
 - FastAPI-native dependency injection via `Permission` dependency.
-- Fully typed library definitions, especially user-facing interfaces.
-- 🚧 Minimal AI involvement and fully covered with tests. 
+- Fully typed library definitions, especially user-facing interfaces. Full test coverage for both negative and positive scenarios.
 
 
 ## Supported Python version
 
-Currently, library is designed to work with Python 3.14+
+Currently, library is designed to work with Python 3.14+ and uses modern language syntax.
 
 
 ## Installation

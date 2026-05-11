@@ -1,8 +1,11 @@
+import typing
+
 import pytest
+import pytest_asyncio
 from fastapi import Depends
 from pydantic import ValidationError
-from sqlalchemy import Select, and_, false, not_, or_, select, true, types
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from tortoise import Tortoise, fields, models
+from tortoise.expressions import Q
 
 from fastapi_guardian import exceptions
 from fastapi_guardian.dependencies import BasePermission
@@ -15,36 +18,59 @@ from fastapi_guardian.dto import (
     Principal,
     ResourcePermissionGrant,
 )
-from fastapi_guardian.ext.sqlalchemy import (
-    SqlalchemyAuthEngine,
-    SqlalchemyPermissionExpression,
-    SqlalchemyResource,
+from fastapi_guardian.ext.tortoise import (
+    TortoiseAuthEngine,
+    TortoisePermissionExpression,
+    TortoiseResource,
 )
 
 
-class Base(DeclarativeBase, SqlalchemyResource, __resource_abstract__=True):
+class Base(TortoiseResource, models.Model):
     __resource_app_name__ = "auth"
-    id: Mapped[int] = mapped_column(types.Integer, primary_key=True, autoincrement=True)
+    id = fields.IntField(primary_key=True)
+
+    class Meta:
+        abstract = True
 
 
 class User(Base):
-    __tablename__ = "user"
+    __resource_name__ = "user"
 
-    username: Mapped[str] = mapped_column(types.String(255))
-    email: Mapped[str] = mapped_column(types.String(255))
+    username = fields.CharField(max_length=255)
+    email = fields.CharField(max_length=255)
+
+
+@pytest_asyncio.fixture()
+async def tortoise_test_app():
+    await Tortoise.close_connections()
+    await Tortoise.init(
+        db_url="sqlite://:memory:",
+        modules={"auth": [__name__]},
+    )
+    await Tortoise.generate_schemas()
+    await User.bulk_create(
+        [
+            User(id=1, username="admin", email="admin@example.com"),
+            User(id=42, username="alice", email="alice@example.com"),
+            User(id=43, username="bob", email="bob@example.com"),
+            User(id=44, username="guest", email="guest@example.com"),
+        ]
+    )
+    yield
+    await Tortoise.close_connections()
 
 
 predicates = [
     AuthPredicate[type[User], str](
-        name="self", fn=lambda context: context.resource.id == context.principal.id
+        name="self", fn=lambda context: Q(id=context.principal.id)
     ),
     AuthPredicate[type[User], str](
         name="only_admin_email",
-        fn=lambda context: context.resource.email == "admin@example.com",
+        fn=lambda context: Q(email="admin@example.com"),
     ),
     AuthPredicate[type[User], str](
         name="only_admin_username",
-        fn=lambda context: context.resource.username == "admin",
+        fn=lambda context: Q(username="admin"),
     ),
 ]
 
@@ -87,7 +113,7 @@ admin_principal = Principal[str](
     ],
 )
 def test__permission_expression_parsing__positive(expression_str, expected_string):
-    expression = SqlalchemyPermissionExpression(
+    expression = TortoisePermissionExpression(
         expression=expression_str, predicates=predicates
     )
     assert str(expression) == expected_string
@@ -96,25 +122,31 @@ def test__permission_expression_parsing__positive(expression_str, expected_strin
 def test_resource_subclass_negative():
     with pytest.raises(exceptions.ImproperlyConfigured):
 
-        class InvalidResource(SqlalchemyResource):
+        class InvalidResource(TortoiseResource):
             pass
 
+        InvalidResource.__resource_code__
+
     with pytest.raises(exceptions.ImproperlyConfigured):
 
-        class InvalidResourceWithoutAppName(SqlalchemyResource):
+        class InvalidResourceWithoutAppName(TortoiseResource):
             __resource_name__ = "invalid_resource"
 
+        InvalidResourceWithoutAppName.__resource_code__
+
     with pytest.raises(exceptions.ImproperlyConfigured):
 
-        class InvalidResourceWithoutTableName(SqlalchemyResource):
+        class InvalidResourceWithoutTableName(TortoiseResource):
             __resource_app_name__ = "invalid_app"
+
+        InvalidResourceWithoutTableName.__resource_code__
 
 
 def test_permission_initialization_positive():
-    sa_auth_engine = SqlalchemyAuthEngine()
+    tortoise_auth_engine = TortoiseAuthEngine()
 
     class Permission(BasePermission[type[Base], str]):
-        auth_engine = sa_auth_engine
+        auth_engine = tortoise_auth_engine
 
         async def __call__(
             self, principal: Principal | None = Depends(lambda: None)
@@ -126,11 +158,13 @@ def test_permission_initialization_positive():
     assert permission.permission.action == "read"
     assert permission.permission.scopes == ["global"]
     assert permission.permission.predicates == []
-    assert permission.auth_engine is sa_auth_engine
+    assert permission.auth_engine is tortoise_auth_engine
 
-    sa_auth_engine2 = SqlalchemyAuthEngine()
-    permission2 = Permission(resource=User, action="read", auth_engine=sa_auth_engine2)
-    assert permission2.auth_engine is sa_auth_engine2
+    tortoise_auth_engine2 = TortoiseAuthEngine()
+    permission2 = Permission(
+        resource=User, action="read", auth_engine=tortoise_auth_engine2
+    )
+    assert permission2.auth_engine is tortoise_auth_engine2
 
 
 def test_permission_initialization_negative():
@@ -145,7 +179,7 @@ def test_permission_initialization_negative():
         Permission(resource=User, action="read")
 
     class ValidPermission(BasePermission[type[Base], str]):
-        auth_engine = SqlalchemyAuthEngine()
+        auth_engine = TortoiseAuthEngine()
 
         async def __call__(
             self, principal: Principal | None = Depends(lambda: None)
@@ -179,40 +213,57 @@ def test_permission_initialization_negative():
 )
 def test__permission_expression_parsing__negative(expression_str, expected_exception):
     with pytest.raises(expected_exception):
-        SqlalchemyPermissionExpression(expression=expression_str, predicates=predicates)
+        TortoisePermissionExpression(expression=expression_str, predicates=predicates)
 
 
 @pytest.mark.parametrize(
-    ("expression_str", "expected_result"),
+    ("expression_str", "principal_id", "expected_ids"),
     [
-        ("self", User.id == admin_principal.id),
-        ("not self", not_(User.id == admin_principal.id)),
+        ("self", "42", [42]),
+        ("not self", "42", [1, 43, 44]),
         (
             "self and only_admin_email",
-            and_(User.id == admin_principal.id, User.email == "admin@example.com"),
+            "42",
+            [],
         ),
         (
             "self or only_admin_email",
-            or_(User.id == admin_principal.id, User.email == "admin@example.com"),
+            "42",
+            [1, 42],
         ),
     ],
 )
-def test__permission_expression_evaluation__positive(expression_str, expected_result):
-    expression = SqlalchemyPermissionExpression(
+@pytest.mark.asyncio
+async def test__permission_expression_evaluation__positive(
+    tortoise_test_app,
+    expression_str,
+    principal_id,
+    expected_ids,
+):
+    expression = TortoisePermissionExpression(
         expression=expression_str, predicates=predicates
     )
-    assert str(
-        expression.evaluate(
-            context=AuthContext[type[User], str](
-                principal=admin_principal,
-                current_permission=PermissionDefinition[type[User], str](
-                    resource=User,
-                    action="read",
-                    predicates=predicates,
-                ),
-            )
+    query_filter = expression.evaluate(
+        context=AuthContext[type[User], str](
+            principal=Principal(
+                id=principal_id,
+                email="alice@example.com",
+                username="alice",
+                permissions=[],
+            ),
+            current_permission=PermissionDefinition[type[User], str](
+                resource=User,
+                action="read",
+                predicates=predicates,
+            ),
         )
-    ) == str(expected_result)
+    )
+
+    actual_ids = (
+        await User.filter(query_filter).order_by("id").values_list("id", flat=True)
+    )
+
+    assert actual_ids == expected_ids
 
 
 def _raising_predicate_fn(_context):
@@ -236,7 +287,7 @@ raising_predicates = [
     ],
 )
 def test__permission_expression_evaluation__negative(expression_str):
-    expression = SqlalchemyPermissionExpression(
+    expression = TortoisePermissionExpression(
         expression=expression_str, predicates=raising_predicates
     )
     with pytest.raises(exceptions.ExpressionEvaluationError):
@@ -272,26 +323,28 @@ def _make_context(principal: Principal, *, resource=User, action="read") -> Auth
             predicates=[
                 AuthPredicate[type[User], str](
                     name="self",
-                    fn=lambda context: context.resource.id == context.principal.id,
+                    fn=lambda context: Q(id=context.principal.id),
                 ),
                 {
                     "name": "only_admin_email",
-                    "fn": lambda context: context.resource.email == "admin@example.com",
+                    "fn": lambda context: Q(email="admin@example.com"),
                 },
             ],
         ),
     )
 
 
-def _whereclause_str(query: Select) -> str:
-    assert query.whereclause is not None
-    return str(query.whereclause)
+async def _filtered_user_ids(context: AuthContext) -> list[int]:
+    query = engine.filter_query(context=context, query=User.all())
+    return await typing.cast(
+        list[int], query.order_by("id").values_list("id", flat=True)
+    )
 
 
-engine = SqlalchemyAuthEngine()
+engine = TortoiseAuthEngine()
 
 
-class _NoIdResource(SqlalchemyResource):
+class _NoIdResource(TortoiseResource):
     __resource_app_name__ = "auth"
     __resource_name__ = "no_id_resource"
 
@@ -341,41 +394,46 @@ def test__matching_grants__no_grants__returns_empty():
     assert engine.matching_grants(context=context) == []
 
 
-def test__filter_query__no_matching_grants__filters_out_all():
+@pytest.mark.asyncio
+async def test__filter_query__no_matching_grants__filters_out_all(tortoise_test_app):
     grant = GlobalPermissionGrant(resource="auth.role", action="read")
     context = _make_context(_make_principal(grant))
-    query = engine.filter_query(context=context, query=select(User))
-    assert _whereclause_str(query) == str(false())
+    assert await _filtered_user_ids(context) == []
 
 
-def test__filter_query__global_scope__allows_all():
+@pytest.mark.asyncio
+async def test__filter_query__global_scope__allows_all(tortoise_test_app):
     grant = GlobalPermissionGrant(resource="auth.user", action="read")
     context = _make_context(_make_principal(grant))
-    query = engine.filter_query(context=context, query=select(User))
-    assert _whereclause_str(query) == str(true())
+    assert await _filtered_user_ids(context) == [1, 42, 43, 44]
 
 
-def test__filter_query__resource_scope__filters_by_id_in():
+@pytest.mark.asyncio
+async def test__filter_query__resource_scope__filters_by_id_in(tortoise_test_app):
     grants = [
         ResourcePermissionGrant(resource="auth.user", action="read", resource_id="42"),
         ResourcePermissionGrant(resource="auth.user", action="read", resource_id="43"),
     ]
     context = _make_context(_make_principal(*grants))
-    query = engine.filter_query(context=context, query=select(User))
-    assert _whereclause_str(query) == str(or_(User.id.in_(["42", "43"])))
+    assert await _filtered_user_ids(context) == [42, 43]
 
 
-def test__filter_query__conditional_scope__filters_by_expression():
+@pytest.mark.asyncio
+async def test__filter_query__conditional_scope__filters_by_expression(
+    tortoise_test_app,
+):
     grant = ConditionalPermissionGrant(
         resource="auth.user", action="read", condition="self"
     )
     principal = _make_principal(grant)
     context = _make_context(principal)
-    query = engine.filter_query(context=context, query=select(User))
-    assert _whereclause_str(query) == str(or_(User.id == principal.id))
+    assert await _filtered_user_ids(context) == [int(principal.id)]
 
 
-def test__filter_query__resource_and_conditional__combined_with_or():
+@pytest.mark.asyncio
+async def test__filter_query__resource_and_conditional__combined_with_or(
+    tortoise_test_app,
+):
     grants = [
         ConditionalPermissionGrant(
             resource="auth.user", action="read", condition="self"
@@ -384,12 +442,11 @@ def test__filter_query__resource_and_conditional__combined_with_or():
     ]
     principal = _make_principal(*grants)
     context = _make_context(principal)
-    query = engine.filter_query(context=context, query=select(User))
-    expected = or_(User.id == principal.id, User.id.in_(["42"]))
-    assert _whereclause_str(query) == str(expected)
+    assert await _filtered_user_ids(context) == [1, 42]
 
 
-def test__filter_query__global_short_circuits_other_scopes():
+@pytest.mark.asyncio
+async def test__filter_query__global_short_circuits_other_scopes(tortoise_test_app):
     grants = [
         ConditionalPermissionGrant(
             resource="auth.user", action="read", condition="self"
@@ -398,35 +455,43 @@ def test__filter_query__global_short_circuits_other_scopes():
         ResourcePermissionGrant(resource="auth.user", action="read", resource_id="42"),
     ]
     context = _make_context(_make_principal(*grants))
-    query = engine.filter_query(context=context, query=select(User))
-    assert _whereclause_str(query) == str(true())
+    assert await _filtered_user_ids(context) == [1, 42, 43, 44]
 
 
-def test__filter_query__resource_scope_without_id_column__raises():
+@pytest.mark.asyncio
+async def test__filter_query__resource_scope_without_id_column__raises(
+    tortoise_test_app,
+):
     grant = ResourcePermissionGrant(
         resource="auth.no_id_resource", action="read", resource_id="42"
     )
     context = _make_context(_make_principal(grant), resource=_NoIdResource)
     with pytest.raises(exceptions.ImproperlyConfigured):
-        engine.filter_query(context=context, query=select(User))
+        engine.filter_query(context=context, query=User.all())
 
 
-def test__filter_query__conditional_scope_with_unparseable_condition__raises():
+@pytest.mark.asyncio
+async def test__filter_query__conditional_scope_with_unparseable_condition__raises(
+    tortoise_test_app,
+):
     grant = ConditionalPermissionGrant(
         resource="auth.user", action="read", condition="!!invalid!!"
     )
     context = _make_context(_make_principal(grant))
     with pytest.raises(exceptions.ExpressionParsingError):
-        engine.filter_query(context=context, query=select(User))
+        engine.filter_query(context=context, query=User.all())
 
 
-def test__filter_query__conditional_scope_with_unknown_predicate__raises():
+@pytest.mark.asyncio
+async def test__filter_query__conditional_scope_with_unknown_predicate__raises(
+    tortoise_test_app,
+):
     grant = ConditionalPermissionGrant(
         resource="auth.user", action="read", condition="nonexistent_predicate"
     )
     context = _make_context(_make_principal(grant))
     with pytest.raises(exceptions.InvalidPredicateError):
-        engine.filter_query(context=context, query=select(User))
+        engine.filter_query(context=context, query=User.all())
 
 
 @pytest.mark.parametrize(

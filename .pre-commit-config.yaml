@@ -25,5 +25,5 @@ repos:
       name: bandit
       language: system
       entry: uv run bandit -r src/
-      exclude: ^tests/
+      exclude: ^tests/|examples/
       types: [python]
