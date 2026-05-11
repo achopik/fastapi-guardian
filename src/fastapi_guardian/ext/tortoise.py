@@ -78,8 +78,8 @@ class LazyAttribute[T]:
         return self.getter(owner)
 
 
-def get_resource_name(owner: type[Model]) -> str:
-    resource_name = owner._meta.db_table
+def get_resource_name(cls: type[Model]) -> str:
+    resource_name = getattr(getattr(cls, "_meta", None), "db_table", None)
     if resource_name:
         return resource_name
 
@@ -89,7 +89,7 @@ def get_resource_name(owner: type[Model]) -> str:
 
 
 def get_app_name(cls: type[Model]) -> str:
-    resource_app_name = cls._meta.app
+    resource_app_name = getattr(getattr(cls, "_meta", None), "app", None)
     if resource_app_name:
         return resource_app_name
 
@@ -98,8 +98,8 @@ def get_app_name(cls: type[Model]) -> str:
     )
 
 
-def get_resource_code(owner: type[Resource]) -> str:
-    return f"{owner.__resource_app_name__}.{owner.__resource_name__}".lower()
+def get_resource_code(cls: type[Resource]) -> str:
+    return f"{cls.__resource_app_name__}.{cls.__resource_name__}".lower()
 
 
 class TortoiseResource(Resource):
@@ -111,7 +111,6 @@ class TortoiseResource(Resource):
     they come from ``_meta.db_table`` and ``_meta.app`` and must be accessed only after ``Tortoise.init()`` has been called.
     """
 
-    __resource_abstract__: typing.ClassVar[bool] = True
     __resource_name__: typing.ClassVar[str] = typing.cast(
         "str", LazyAttribute(getter=get_resource_name)
     )
@@ -166,11 +165,9 @@ class TortoiseAuthEngine(BaseAuthEngine):
 
         if resource_ids:
             id_column = context.current_permission.resource.__resource_id_column__
-            if (
-                id_column
-                not in typing.cast(
-                    type[Model], context.current_permission.resource
-                )._meta.fields_map
+            model_cls = typing.cast(type[Model], context.current_permission.resource)
+            if id_column not in getattr(
+                getattr(model_cls, "_meta", None), "fields_map", {}
             ):
                 raise exceptions.ImproperlyConfigured(
                     f"Resource '{context.current_permission.resource.__resource_code__}' "

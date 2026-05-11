@@ -4,7 +4,6 @@ from pydantic import (
     BaseModel,
     Field,
     SerializerFunctionWrapHandler,
-    ValidationError,
     model_serializer,
     model_validator,
 )
@@ -94,17 +93,15 @@ class PermissionDefinition[T: type[Resource], ID: Identifier](BaseModel):
 
     resource: T
     action: str
-    scopes: typing.Annotated[list[AuthScope], Field(default_factory=lambda: ["global"])]
-    predicates: typing.Annotated[
-        list[AuthPredicate[T, ID]], Field(default_factory=list)
-    ]
+    scopes: list[AuthScope] = Field(
+        default_factory=lambda: typing.cast(list[AuthScope], ["global"])
+    )
+    predicates: list[AuthPredicate[T, ID]] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_predicates(self) -> typing.Any:
         if "conditional" in self.scopes and not self.predicates:
-            raise ValidationError(
-                "Conditional permissions must have at least one predicate"
-            )
+            raise ValueError("Conditional permissions must have at least one predicate")
         return self
 
 

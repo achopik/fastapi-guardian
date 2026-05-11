@@ -48,6 +48,10 @@ dev = [
     "pytest-factoryboy>=2.8.1",
     "uvicorn>=0.46.0",
     "itsdangerous>=2.2.0",
+    "bandit[sarif,yaml]>=1.9.4",
+    "httpx>=0.28.1",
+    "pre-commit>=4.6.0",
+    "pytest-lazy-fixtures>=1.4.0",
 ]
 
 [build-system]
@@ -63,3 +67,8 @@ ignore_missing_imports = true
 plugins = ["pydantic.mypy"]
 exclude = ["alembic/versions"]
 check_untyped_defs = true
+explicit_package_bases = true
+mypy_path = ["src", "tests"]
+
+[tool.bandit.assert_used]
+skips = ['*_test.py', '*/test_*.py']

@@ -11,24 +11,8 @@ import typing
 from lark import Lark, Token, Transformer
 from lark.exceptions import UnexpectedInput, VisitError
 
+from fastapi_guardian import exceptions
 from fastapi_guardian.dto import AuthContext, AuthPredicate
-
-
-class ExpressionError(Exception):
-    pass
-
-
-class ExpressionParsingError(ExpressionError):
-    pass
-
-
-class InvalidPredicateError(ExpressionError):
-    pass
-
-
-class ExpressionEvaluationError(ExpressionError):
-    pass
-
 
 expression_grammar = Lark(
     r"""
@@ -76,7 +60,7 @@ class AbstractPredicateNode:
         return self.predicate.name
 
     def evaluate(self, context: AuthContext) -> typing.Any:
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover
 
 
 class AbstractNotNode:
@@ -92,7 +76,7 @@ class AbstractNotNode:
         return f"not {_render_child(self.child, self.precedence)}"
 
     def evaluate(self, context: AuthContext) -> typing.Any:
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover
 
 
 class AbstractAndNode:
@@ -110,7 +94,7 @@ class AbstractAndNode:
         )
 
     def evaluate(self, context: AuthContext) -> typing.Any:
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover
 
 
 class AbstractOrNode:
@@ -128,7 +112,7 @@ class AbstractOrNode:
         )
 
     def evaluate(self, context: AuthContext) -> typing.Any:
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover
 
 
 AnyAbstractNode = (
@@ -161,7 +145,7 @@ class ExpressionTransformer[NodeT: AnyAbstractNode](Transformer[Token, NodeT]):
         name = items[0].value
         predicate = self._predicates_by_name.get(name)
         if predicate is None:
-            raise InvalidPredicateError(f"Unknown predicate '{name}'")
+            raise exceptions.InvalidPredicateError(f"Unknown predicate '{name}'")
         return self.predicate_node(predicate=predicate)
 
     def not_expression(self, items: list[typing.Any]) -> AbstractNotNode:
@@ -191,15 +175,15 @@ class PermissionExpression:
         try:
             parse_tree = expression_grammar.parse(expression)
         except UnexpectedInput as exc:
-            raise ExpressionParsingError(str(exc)) from exc
+            raise exceptions.ExpressionParsingError(str(exc)) from exc
         try:
             self._root: AnyAbstractNode = transformer_class(
                 predicates=predicates
             ).transform(parse_tree)
         except VisitError as exc:
-            if isinstance(exc.orig_exc, ExpressionError):
+            if isinstance(exc.orig_exc, exceptions.ExpressionError):
                 raise exc.orig_exc from exc
-            raise ExpressionParsingError(str(exc.orig_exc)) from exc
+            raise exceptions.ExpressionParsingError(str(exc.orig_exc)) from exc
 
     def __repr__(self) -> str:
         return self._root.to_string()
@@ -207,7 +191,7 @@ class PermissionExpression:
     def evaluate(self, context: AuthContext) -> typing.Any:
         try:
             return self._root.evaluate(context)
-        except ExpressionError:
+        except exceptions.ExpressionError:
             raise
         except Exception as exc:
-            raise ExpressionEvaluationError(str(exc)) from exc
+            raise exceptions.ExpressionEvaluationError(str(exc)) from exc
